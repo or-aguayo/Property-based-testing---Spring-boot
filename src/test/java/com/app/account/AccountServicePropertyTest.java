@@ -61,49 +61,37 @@ class AccountServicePropertyTest {
 
     @Provide
     Arbitrary<BigDecimal> nonNegativeBalances() {
-        return Arbitraries.bigDecimals()
-                .between(BigDecimal.ZERO, new BigDecimal("1000000"))
-                .ofScaleBetween(0, 2);
+        return monetaryAmount(BigDecimal.ZERO, new BigDecimal("1000000"), 0, 2);
     }
 
     @Provide
     Arbitrary<BigDecimal> positiveAmounts() {
-        Arbitrary<BigDecimal> small = Arbitraries.bigDecimals()
-                .between(new BigDecimal("0.01"), new BigDecimal("100"))
-                .ofScaleBetween(0, 2);
-        Arbitrary<BigDecimal> medium = Arbitraries.bigDecimals()
-                .between(new BigDecimal("100.01"), new BigDecimal("10000"))
-                .ofScaleBetween(0, 2);
-        Arbitrary<BigDecimal> large = Arbitraries.bigDecimals()
-                .between(new BigDecimal("10000.01"), new BigDecimal("1000000"))
-                .ofScaleBetween(0, 2);
+        Arbitrary<BigDecimal> small = monetaryAmount(new BigDecimal("0.01"), new BigDecimal("100"), 0, 2);
+        Arbitrary<BigDecimal> medium = monetaryAmount(new BigDecimal("100.01"), new BigDecimal("10000"), 0, 2);
+        Arbitrary<BigDecimal> large = monetaryAmount(new BigDecimal("10000.01"), new BigDecimal("1000000"), 0, 2);
         return Arbitraries.oneOf(small, medium, large);
     }
 
     @Provide
     Arbitrary<BigDecimal> variableScaleAmounts() {
-        return Arbitraries.bigDecimals()
-                .between(new BigDecimal("0.0001"), new BigDecimal("1000000"))
-                .ofScaleBetween(0, 6);
+        return monetaryAmount(new BigDecimal("0.0001"), new BigDecimal("1000000"), 0, 6);
     }
 
     @Provide
     Arbitrary<List<BigDecimal>> depositSequences() {
         return Arbitraries.integers().between(1, 5)
-                .flatMap(size -> Arbitraries.collections().of(positiveAmounts()).ofSize(size).list());
+                .flatMap(size -> positiveAmounts().list().ofSize(size));
     }
 
     @Provide
     Arbitrary<List<AccountOperation>> operationSequences() {
-        return Arbitraries.integers().between(1, 12).flatMap(length ->
-                Arbitraries.collections().of(operationArbitrary()).ofSize(length).list());
+        return Arbitraries.integers().between(1, 12)
+                .flatMap(length -> operationArbitrary().list().ofSize(length));
     }
 
     private Arbitrary<AccountOperation> operationArbitrary() {
         Arbitrary<AccountOperationType> type = Arbitraries.of(AccountOperationType.values());
-        Arbitrary<BigDecimal> amount = Arbitraries.bigDecimals()
-                .between(new BigDecimal("0.01"), new BigDecimal("5000"))
-                .ofScaleBetween(0, 2);
+        Arbitrary<BigDecimal> amount = monetaryAmount(new BigDecimal("0.01"), new BigDecimal("5000"), 0, 2);
         return Combinators.combine(type, amount).as(AccountOperation::new);
     }
 
@@ -603,6 +591,14 @@ class AccountServicePropertyTest {
 
     private String nextAccountNumber() {
         return "ACC-" + ACCOUNT_SEQUENCE.incrementAndGet() + "-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private Arbitrary<BigDecimal> monetaryAmount(BigDecimal min, BigDecimal max, int minScale, int maxScale) {
+        return Combinators.combine(
+                        Arbitraries.bigDecimals().between(min, max),
+                        Arbitraries.integers().between(minScale, maxScale))
+                .as((value, scale) -> value.setScale(scale, RoundingMode.HALF_UP))
+                .filter(scaled -> scaled.compareTo(min) >= 0 && scaled.compareTo(max) <= 0);
     }
 
     private enum AccountOperationType {

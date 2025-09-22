@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
+import net.jqwik.api.Combinators;
 import net.jqwik.api.ForAll;
 import net.jqwik.api.Label;
 import net.jqwik.api.Property;
@@ -70,16 +71,12 @@ class AccountApiPropertyTest {
 
     @Provide
     Arbitrary<BigDecimal> balances() {
-        return Arbitraries.bigDecimals()
-                .between(BigDecimal.ZERO, new BigDecimal("10000"))
-                .ofScaleBetween(0, 2);
+        return monetaryAmounts(BigDecimal.ZERO, new BigDecimal("10000"), 0, 2);
     }
 
     @Provide
     Arbitrary<BigDecimal> transferAmounts() {
-        return Arbitraries.bigDecimals()
-                .between(new BigDecimal("0.01"), new BigDecimal("5000"))
-                .ofScaleBetween(0, 2);
+        return monetaryAmounts(new BigDecimal("0.01"), new BigDecimal("5000"), 0, 2);
     }
 
     @Property(tries = 20)
@@ -163,9 +160,7 @@ class AccountApiPropertyTest {
 
     @Provide
     Arbitrary<BigDecimal> invalidAmounts() {
-        return Arbitraries.bigDecimals()
-                .between(new BigDecimal("-9999"), new BigDecimal("-0.01"))
-                .ofScaleBetween(0, 4);
+        return monetaryAmounts(new BigDecimal("-9999"), new BigDecimal("-0.01"), 2, 4);
     }
 
     private String createAccountViaApi(BigDecimal balance) throws Exception {
@@ -188,5 +183,13 @@ class AccountApiPropertyTest {
                 .andReturn();
         Map<?, ?> payload = objectMapper.readValue(result.getResponse().getContentAsString(), Map.class);
         return new BigDecimal(payload.get("balance").toString());
+    }
+
+    private Arbitrary<BigDecimal> monetaryAmounts(BigDecimal min, BigDecimal max, int minScale, int maxScale) {
+        return Combinators.combine(
+                        Arbitraries.bigDecimals().between(min, max),
+                        Arbitraries.integers().between(minScale, maxScale))
+                .as((value, scale) -> value.setScale(scale, RoundingMode.HALF_UP))
+                .filter(scaled -> scaled.compareTo(min) >= 0 && scaled.compareTo(max) <= 0);
     }
 }
