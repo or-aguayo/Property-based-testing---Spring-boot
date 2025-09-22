@@ -60,7 +60,7 @@ public class AccountController {
     @PostMapping("/transfer")
     public ResponseEntity<Void> transfer(@Valid @RequestBody TransferRequest request) {
         accountService.transfer(request.getSourceAccountNumber(), request.getDestinationAccountNumber(),
-                request.getAmount());
+                request.getAmount(), request.getIdempotencyKey());
         return ResponseEntity.noContent().build();
     }
 

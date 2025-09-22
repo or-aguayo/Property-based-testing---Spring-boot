@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Objects;
 
 @Entity
@@ -33,7 +34,7 @@ public class Account {
     public Account(String accountNumber, String holderName, BigDecimal balance) {
         this.accountNumber = accountNumber;
         this.holderName = holderName;
-        this.balance = balance;
+        this.balance = normalize(balance);
     }
 
     public Long getId() {
@@ -57,15 +58,19 @@ public class Account {
     }
 
     public void setBalance(BigDecimal balance) {
-        this.balance = balance;
+        this.balance = normalize(balance);
     }
 
     public void deposit(BigDecimal amount) {
-        this.balance = this.balance.add(amount);
+        this.balance = normalize(this.balance.add(amount));
     }
 
     public void withdraw(BigDecimal amount) {
-        this.balance = this.balance.subtract(amount);
+        this.balance = normalize(this.balance.subtract(amount));
+    }
+
+    private BigDecimal normalize(BigDecimal value) {
+        return value.setScale(2, RoundingMode.HALF_UP);
     }
 
     @Override
