@@ -19,7 +19,6 @@ import org.springframework.stereotype.Service;
 @Service
 @Transactional
 public class AccountService {
-
     private static final String TRANSFER_OPERATION = "TRANSFER";
 
     private final AccountRepository accountRepository;

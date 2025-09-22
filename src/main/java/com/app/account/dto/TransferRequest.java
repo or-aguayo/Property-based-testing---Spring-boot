@@ -20,7 +20,6 @@ public class TransferRequest {
 
     @Size(max = 128, message = "La idempotency-key no puede superar 128 caracteres")
     private String idempotencyKey;
-
     public String getSourceAccountNumber() {
         return sourceAccountNumber;
     }
