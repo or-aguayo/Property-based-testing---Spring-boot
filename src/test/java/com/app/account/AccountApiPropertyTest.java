@@ -22,7 +22,6 @@ import net.jqwik.api.lifecycle.AfterContainer;
 import net.jqwik.api.lifecycle.BeforeContainer;
 import net.jqwik.api.lifecycle.BeforeTry;
 import org.assertj.core.api.Assertions;
-import org.junit.jupiter.api.TestInstance;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.MediaType;
@@ -35,17 +34,38 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountApiPropertyTest {
 
     private static ConfigurableApplicationContext context;
+    private static MockMvc mockMvc;
+    private static ObjectMapper objectMapper;
+    private static AccountRepository accountRepository;
+    private static AccountTransactionRepository transactionRepository;
+    private static IdempotencyRecordRepository idempotencyRecordRepository;
 
-    private MockMvc mockMvc;
-    private ObjectMapper objectMapper;
-    private AccountRepository accountRepository;
-    private AccountTransactionRepository transactionRepository;
-    private IdempotencyRecordRepository idempotencyRecordRepository;
+    @BeforeContainer
+    static void loadSpringContext() {
+        if (context == null) {
+            // Arrancamos la aplicación con el contexto completo y puerto aleatorio para reutilizar la pila web real.
+            context = new SpringApplicationBuilder(AppApplication.class)
+                    .properties(Map.of("server.port", "0"))
+                    .run();
+        }
+    }
 
+    @AfterContainer
+    static void closeSpringContext() {
+        if (context != null) {
+            // Liberamos los recursos asociados al contenedor web una vez finalicen todas las propiedades.
+            context.close();
+            context = null;
+            mockMvc = null;
+            objectMapper = null;
+            accountRepository = null;
+            transactionRepository = null;
+            idempotencyRecordRepository = null;
+        }
+    }
     @BeforeContainer
     void loadSpringContext() {
         if (context == null) {
@@ -75,10 +95,24 @@ class AccountApiPropertyTest {
 
     @BeforeTry
     void cleanState() {
+        // Aseguramos que los beans del contexto web estén disponibles antes de ejecutar cada propiedad.
+        ensureDependenciesLoaded();
         // Reiniciamos las tablas relevantes para que cada intento parta de un estado determinista.
         transactionRepository.deleteAll();
         idempotencyRecordRepository.deleteAll();
         accountRepository.deleteAll();
+    }
+
+    private void ensureDependenciesLoaded() {
+        if (mockMvc == null) {
+            // Obtenemos todos los beans necesarios para invocar la API desde MockMvc en cada propiedad.
+            objectMapper = context.getBean(ObjectMapper.class);
+            accountRepository = context.getBean(AccountRepository.class);
+            transactionRepository = context.getBean(AccountTransactionRepository.class);
+            idempotencyRecordRepository = context.getBean(IdempotencyRecordRepository.class);
+            WebApplicationContext webContext = (WebApplicationContext) context;
+            mockMvc = MockMvcBuilders.webAppContextSetup(webContext).build();
+        }
     }
 
     @Provide

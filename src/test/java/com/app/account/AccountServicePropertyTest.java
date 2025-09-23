@@ -31,20 +31,41 @@ import net.jqwik.api.lifecycle.BeforeContainer;
 import net.jqwik.api.lifecycle.BeforeTry;
 import net.jqwik.api.statistics.Statistics;
 import org.assertj.core.api.Assertions;
-import org.junit.jupiter.api.TestInstance;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+
 class AccountServicePropertyTest {
 
     private static final AtomicInteger ACCOUNT_SEQUENCE = new AtomicInteger();
 
     private static ConfigurableApplicationContext context;
+    private static AccountService accountService;
+    private static AccountRepository accountRepository;
+    private static AccountTransactionRepository transactionRepository;
+    private static IdempotencyRecordRepository idempotencyRecordRepository;
 
-    private AccountService accountService;
-    private AccountRepository accountRepository;
-    private AccountTransactionRepository transactionRepository;
-    private IdempotencyRecordRepository idempotencyRecordRepository;
+    @BeforeContainer
+    static void loadSpringContext() {
+        if (context == null) {
+            // Inicializamos la aplicación exactamente igual que en producción para reutilizar todos los beans reales.
+            context = new SpringApplicationBuilder(AppApplication.class)
+                    .properties(Map.of("server.port", "0"))
+                    .run();
+        }
+    }
+
+    @AfterContainer
+    static void closeSpringContext() {
+        if (context != null) {
+            // Cerramos el contexto al finalizar todas las propiedades para liberar conexiones y limpiar la memoria.
+            context.close();
+            context = null;
+            accountService = null;
+            accountRepository = null;
+            transactionRepository = null;
+            idempotencyRecordRepository = null;
+        }
+    }
 
     @BeforeContainer
     void loadSpringContext() {
@@ -73,10 +94,22 @@ class AccountServicePropertyTest {
 
     @BeforeTry
     void cleanState() {
+        // Aseguramos que los beans hayan sido recuperados del contexto compartido antes de interactuar con la base de datos.
+        ensureDependenciesLoaded();
         // Eliminamos cualquier rastro de datos generado en pruebas anteriores antes de cada intento de propiedad.
         transactionRepository.deleteAll();
         idempotencyRecordRepository.deleteAll();
         accountRepository.deleteAll();
+    }
+
+    private void ensureDependenciesLoaded() {
+        if (accountService == null) {
+            // Recuperamos los beans necesarios a partir del contexto arrancado una sola vez para todo el conjunto de propiedades.
+            accountService = context.getBean(AccountService.class);
+            accountRepository = context.getBean(AccountRepository.class);
+            transactionRepository = context.getBean(AccountTransactionRepository.class);
+            idempotencyRecordRepository = context.getBean(IdempotencyRecordRepository.class);
+        }
     }
 
     @Provide
