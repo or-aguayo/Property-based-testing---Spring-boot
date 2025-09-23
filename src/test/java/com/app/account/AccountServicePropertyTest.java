@@ -113,7 +113,8 @@ class AccountServicePropertyTest {
         }
     }
 
-    // Generador de saldos iniciales no negativos para las cuentas creadas durante las pruebas.
+    // @Provide expone el generador a jqwik: cualquier parámetro anotado con "nonNegativeBalances" recibirá valores producidos
+    // por este método, garantizando saldos iniciales no negativos para las cuentas creadas durante las pruebas.
     @Provide
     Arbitrary<BigDecimal> nonNegativeBalances() {
         return monetaryAmount(BigDecimal.ZERO, new BigDecimal("1000000"), 0, 2);
