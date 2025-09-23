@@ -66,7 +66,7 @@ class AccountServicePropertyTest {
             idempotencyRecordRepository = null;
         }
     }
-
+/* 
     @BeforeContainer
     void loadSpringContext() {
         if (context == null) {
@@ -91,7 +91,7 @@ class AccountServicePropertyTest {
             context = null;
         }
     }
-
+*/
     @BeforeTry
     void cleanState() {
         // Aseguramos que los beans hayan sido recuperados del contexto compartido antes de interactuar con la base de datos.

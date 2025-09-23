@@ -66,6 +66,7 @@ class AccountApiPropertyTest {
             idempotencyRecordRepository = null;
         }
     }
+    /* 
     @BeforeContainer
     void loadSpringContext() {
         if (context == null) {
@@ -92,6 +93,7 @@ class AccountApiPropertyTest {
             context = null;
         }
     }
+    */
 
     @BeforeTry
     void cleanState() {
