@@ -117,6 +117,7 @@ class AccountApiPropertyTest {
         }
     }
 
+    // @Provide registra este método como un generador reutilizable; jqwik lo invoca cuando una propiedad pide "accountNumbers".
     @Provide
     Arbitrary<String> accountNumbers() {
         return Arbitraries.strings().withCharRange('A', 'Z')
@@ -124,16 +125,19 @@ class AccountApiPropertyTest {
                 .map(prefix -> prefix + UUID.randomUUID().toString().substring(0, 6));
     }
 
+    // Generador de nombres de titulares con caracteres alfabéticos que simulan entradas reales.
     @Provide
     Arbitrary<String> holderNames() {
         return Arbitraries.strings().alpha().ofMinLength(3).ofMaxLength(20);
     }
 
+    // Generador de saldos iniciales permitidos por la API.
     @Provide
     Arbitrary<BigDecimal> balances() {
         return monetaryAmounts(BigDecimal.ZERO, new BigDecimal("10000"), 0, 2);
     }
 
+    // Generador de montos para transferencias entre cuentas.
     @Provide
     Arbitrary<BigDecimal> transferAmounts() {
         return monetaryAmounts(new BigDecimal("0.01"), new BigDecimal("5000"), 0, 2);
@@ -211,6 +215,7 @@ class AccountApiPropertyTest {
                 .andExpect(status().is4xxClientError());
     }
 
+    // Generador de números de cuenta inválidos para probar la validación del controlador REST.
     @Provide
     Arbitrary<String> invalidAccountNumbers() {
         return Arbitraries.oneOf(
@@ -220,12 +225,14 @@ class AccountApiPropertyTest {
                         .ofMinLength(70).ofMaxLength(140));
     }
 
+    // Montos negativos con varias escalas para provocar errores de validación.
     @Provide
     Arbitrary<BigDecimal> invalidAmounts() {
         return monetaryAmounts(new BigDecimal("-9999"), new BigDecimal("-0.01"), 2, 4);
     }
 
     private String createAccountViaApi(BigDecimal balance) throws Exception {
+        // Alta de cuentas mediante una petición POST para reutilizar el flujo real expuesto por la API REST.
         String accountNumber = UUID.randomUUID().toString().substring(0, 10).toUpperCase();
         CreateAccountRequest request = new CreateAccountRequest();
         request.setAccountNumber(accountNumber);
@@ -240,6 +247,8 @@ class AccountApiPropertyTest {
     }
 
     private BigDecimal fetchBalance(String accountNumber) throws Exception {
+        // Invocamos la API real para obtener el saldo actual, lo parseamos con ObjectMapper y lo expresamos como BigDecimal.
+        // Al usar BigDecimal evitamos errores de redondeo y comparamos con precisión monetaria de dos decimales.
         MvcResult result = mockMvc.perform(get("/api/accounts/" + accountNumber))
                 .andExpect(status().isOk())
                 .andReturn();

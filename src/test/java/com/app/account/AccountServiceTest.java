@@ -21,6 +21,8 @@ class AccountServiceTest {
 
     @Test
     void depositWithdrawAndTransferUpdateBalancesAndHistory() {
+        // Escenario integral: se crea una cuenta con saldo inicial, se realizan depósito, retiro y transferencia
+        // y se verifica que los saldos y los historiales registrados coinciden con lo esperado paso a paso.
         Account source = accountService.createAccount("ACC-100", "John Doe", BigDecimal.valueOf(100));
         Account target = accountService.createAccount("ACC-200", "Jane Doe", BigDecimal.ZERO);
 
@@ -49,6 +51,7 @@ class AccountServiceTest {
 
     @Test
     void withdrawWithInsufficientFundsThrowsException() {
+        // Prueba negativa puntual: un retiro mayor que el saldo debe fallar lanzando BusinessException.
         accountService.createAccount("ACC-300", "No Funds", BigDecimal.ZERO);
         assertThrows(BusinessException.class,
                 () -> accountService.withdraw("ACC-300", BigDecimal.valueOf(10)));
