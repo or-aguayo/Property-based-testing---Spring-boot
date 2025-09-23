@@ -6,6 +6,7 @@ import com.app.idempotency.IdempotencyRecordRepository;
 import com.app.transaction.AccountTransaction;
 import com.app.transaction.AccountTransactionRepository;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -112,11 +113,13 @@ class AccountServicePropertyTest {
         }
     }
 
+    // Generador de saldos iniciales no negativos para las cuentas creadas durante las pruebas.
     @Provide
     Arbitrary<BigDecimal> nonNegativeBalances() {
         return monetaryAmount(BigDecimal.ZERO, new BigDecimal("1000000"), 0, 2);
     }
 
+    // Generador de montos positivos que cubre diferentes órdenes de magnitud para depósitos y retiros.
     @Provide
     Arbitrary<BigDecimal> positiveAmounts() {
         Arbitrary<BigDecimal> small = monetaryAmount(new BigDecimal("0.01"), new BigDecimal("100"), 0, 2);
@@ -125,30 +128,35 @@ class AccountServicePropertyTest {
         return Arbitraries.oneOf(small, medium, large);
     }
 
+    // Generador de montos con mayor precisión decimal para validar normalización de escala.
     @Provide
     Arbitrary<BigDecimal> variableScaleAmounts() {
         // Para cantidades con más precisión forzamos a que la escala mínima permita representar 0.0001 sin errores.
         return monetaryAmount(new BigDecimal("0.0001"), new BigDecimal("1000000"), 4, 6);
     }
 
+    // Generador de secuencias de depósitos para estudiar el efecto de múltiples operaciones encadenadas.
     @Provide
     Arbitrary<List<BigDecimal>> depositSequences() {
         return Arbitraries.integers().between(1, 5)
                 .flatMap(size -> positiveAmounts().list().ofSize(size));
     }
 
+    // Generador de secuencias de operaciones mixtas (depósitos, retiros y transferencias).
     @Provide
     Arbitrary<List<AccountOperation>> operationSequences() {
         return Arbitraries.integers().between(1, 12)
                 .flatMap(length -> operationArbitrary().list().ofSize(length));
     }
 
+    // Generador de una operación individual combinando tipo y monto para reutilizar en diferentes propiedades.
     private Arbitrary<AccountOperation> operationArbitrary() {
         Arbitrary<AccountOperationType> type = Arbitraries.of(AccountOperationType.values());
         Arbitrary<BigDecimal> amount = monetaryAmount(new BigDecimal("0.01"), new BigDecimal("5000"), 0, 2);
         return Combinators.combine(type, amount).as(AccountOperation::new);
     }
 
+    // Propiedad: un depósito siempre incrementa el saldo y jamás deja la cuenta en negativo.
     @Property(tries = 50)
     @Label("1.1 Depósito aumenta saldo y nunca negativo")
     void depositAlwaysIncreasesBalance(@ForAll("nonNegativeBalances") BigDecimal initialBalance,
@@ -162,6 +170,7 @@ class AccountServicePropertyTest {
         Assertions.assertThat(afterDeposit.getBalance()).isGreaterThanOrEqualTo(BigDecimal.ZERO);
     }
 
+    // Propiedad: un retiro solamente es válido cuando existe saldo suficiente disponible.
     @Property(tries = 50)
     @Label("1.2 Retiros nunca dejan saldo negativo")
     void withdrawalsRespectAvailableBalance(@ForAll("nonNegativeBalances") BigDecimal initialBalance,
@@ -181,6 +190,7 @@ class AccountServicePropertyTest {
         }
     }
 
+    // Propiedad: leer el saldo de una cuenta debe ser una operación idempotente.
     @Property(tries = 25)
     @Label("1.3 Consulta es idempotente")
     void balanceLookupIsIdempotent(@ForAll("nonNegativeBalances") BigDecimal initialBalance) {
@@ -190,6 +200,7 @@ class AccountServicePropertyTest {
         Assertions.assertThat(firstRead.getBalance()).isEqualByComparingTo(secondRead.getBalance());
     }
 
+    // Propiedad: la escala monetaria final siempre respeta dos decimales aunque los montos de entrada usen más precisión.
     @Property(tries = 50)
     @Label("1.4 Escala monetaria consistente")
     void monetaryScaleIsConsistent(@ForAll("nonNegativeBalances") BigDecimal initialBalance,
@@ -206,6 +217,7 @@ class AccountServicePropertyTest {
         }
     }
 
+    // Propiedad: la suma del dinero entre dos cuentas debe conservarse tras una transferencia válida.
     @Property(tries = 40)
     @Label("2.1 Conservación de dinero en transferencias")
     void transferConservesTotal(@ForAll("nonNegativeBalances") BigDecimal sourceBalance,
@@ -230,6 +242,7 @@ class AccountServicePropertyTest {
         }
     }
 
+    // Propiedad: ninguna transferencia puede dejar saldos negativos en las cuentas involucradas.
     @Property(tries = 40)
     @Label("2.2 No negatividad tras transferencias")
     void transferNeverCreatesNegativeBalances(@ForAll("nonNegativeBalances") BigDecimal sourceBalance,
@@ -252,6 +265,7 @@ class AccountServicePropertyTest {
         }
     }
 
+    // Propiedad: repetir una transferencia con la misma clave de idempotencia no debe duplicar efectos.
     @Property(tries = 30)
     @Label("2.3 Idempotencia de transferencias por idempotency-key")
     void transferHonoursIdempotencyKey(@ForAll("nonNegativeBalances") BigDecimal sourceBalance,
@@ -288,6 +302,7 @@ class AccountServicePropertyTest {
         }
     }
 
+    // Propiedad: el orden en el que se aplican múltiples depósitos no altera el saldo final.
     @Property(tries = 25)
     @Label("3.1 Conmutatividad de depósitos")
     void depositOrderDoesNotMatter(@ForAll("nonNegativeBalances") BigDecimal initialBalance,
@@ -317,39 +332,52 @@ class AccountServicePropertyTest {
         Assertions.assertThat(afterReversed).isEqualByComparingTo(expected);
     }
 
+    // Propiedad: una secuencia de depósito y retiro produce el mismo saldo independientemente del orden,
+    // siempre que ambas operaciones puedan ejecutarse finalmente.
     @Property(tries = 30)
     @Label("3.2 Depositar y retirar vs retirar y depositar")
     void depositWithdrawSequencesBehaveAsExpected(@ForAll("nonNegativeBalances") BigDecimal initialBalance,
             @ForAll("positiveAmounts") BigDecimal deposit,
             @ForAll("positiveAmounts") BigDecimal withdrawal) {
-        Account accountOne = accountService.createAccount(nextAccountNumber(), "Holder", initialBalance);
-        accountService.deposit(accountOne.getAccountNumber(), deposit);
-        BigDecimal postDeposit = accountService.getAccount(accountOne.getAccountNumber()).getBalance();
+        BigDecimal normalizedInitial = normalize(initialBalance);
+        BigDecimal normalizedDeposit = normalize(deposit);
+        BigDecimal normalizedWithdrawal = normalize(withdrawal);
+        BigDecimal postDepositExpected = normalize(normalizedInitial.add(normalizedDeposit));
+        boolean withdrawalPossibleAfterDeposit = postDepositExpected.compareTo(normalizedWithdrawal) >= 0;
+        BigDecimal expectedFinal = withdrawalPossibleAfterDeposit
+                ? normalize(postDepositExpected.subtract(normalizedWithdrawal))
+                : postDepositExpected;
+
+        Account accountDepositFirst = accountService.createAccount(nextAccountNumber(), "Holder", initialBalance);
+        accountService.deposit(accountDepositFirst.getAccountNumber(), deposit);
         try {
-            accountService.withdraw(accountOne.getAccountNumber(), withdrawal);
+            accountService.withdraw(accountDepositFirst.getAccountNumber(), withdrawal);
         } catch (BusinessException ignored) {
-            // ignore
+            // Si el retiro falla incluso después del depósito, simplemente conservamos el saldo tras el depósito.
         }
-        BigDecimal finalOne = accountService.getAccount(accountOne.getAccountNumber()).getBalance();
+        BigDecimal finalAfterDepositFirst = accountService.getAccount(accountDepositFirst.getAccountNumber()).getBalance();
+        Assertions.assertThat(finalAfterDepositFirst).isEqualByComparingTo(expectedFinal);
 
         cleanState();
-        Account accountTwo = accountService.createAccount(nextAccountNumber(), "Holder", initialBalance);
+        Account accountWithdrawFirst = accountService.createAccount(nextAccountNumber(), "Holder", initialBalance);
+        boolean withdrawalSucceededInitially = true;
         try {
-            accountService.withdraw(accountTwo.getAccountNumber(), withdrawal);
-            accountService.deposit(accountTwo.getAccountNumber(), deposit);
-            BigDecimal expected = normalize(initialBalance.subtract(withdrawal).add(deposit));
-            Assertions.assertThat(accountService.getAccount(accountTwo.getAccountNumber()).getBalance())
-                    .isEqualByComparingTo(expected);
+            accountService.withdraw(accountWithdrawFirst.getAccountNumber(), withdrawal);
         } catch (BusinessException ex) {
-            accountService.deposit(accountTwo.getAccountNumber(), deposit);
-            Assertions.assertThat(accountService.getAccount(accountTwo.getAccountNumber()).getBalance())
-                    .isEqualByComparingTo(postDeposit);
+            withdrawalSucceededInitially = false;
         }
 
-        Assertions.assertThat(finalOne)
-                .isEqualByComparingTo(accountService.getAccount(accountTwo.getAccountNumber()).getBalance());
+        accountService.deposit(accountWithdrawFirst.getAccountNumber(), deposit);
+
+        if (!withdrawalSucceededInitially && withdrawalPossibleAfterDeposit) {
+            accountService.withdraw(accountWithdrawFirst.getAccountNumber(), withdrawal);
+        }
+
+        BigDecimal finalAfterWithdrawFirst = accountService.getAccount(accountWithdrawFirst.getAccountNumber()).getBalance();
+        Assertions.assertThat(finalAfterWithdrawFirst).isEqualByComparingTo(expectedFinal);
     }
 
+    // Propiedad: transferir un monto y luego revertir la operación deja a ambas cuentas como al inicio.
     @Property(tries = 30)
     @Label("3.3 Transferencias reversibles")
     void transferIsReversible(@ForAll("nonNegativeBalances") BigDecimal sourceBalance,
@@ -371,6 +399,8 @@ class AccountServicePropertyTest {
                 .isEqualByComparingTo(targetBalance.setScale(2, RoundingMode.HALF_UP));
     }
 
+    // Propiedad: secuencias aleatorias de operaciones mantienen invariantes básicos del sistema (sin saldos negativos
+    // y conservación de dinero).
     @Property(tries = 15)
     @Label("4.1 Secuencias aleatorias mantienen invariantes")
     void randomSequencesMaintainInvariants(@ForAll("nonNegativeBalances") BigDecimal baseBalance,
@@ -419,6 +449,7 @@ class AccountServicePropertyTest {
         }
     }
 
+    // Propiedad: cualquier permutación de un subconjunto de operaciones debe respetar los mismos invariantes.
     @Property(tries = 10)
     @Label("4.2 Invariantes en permutaciones de operaciones")
     void permutationsMaintainInvariants(@ForAll("operationSequences") List<AccountOperation> operations) {
@@ -463,6 +494,7 @@ class AccountServicePropertyTest {
         }
     }
 
+    // Propiedad: solo las operaciones exitosas deben incrementar el historial de transacciones.
     @Property(tries = 30)
     @Label("5.1 Historial crece solo en éxito")
     void transactionHistoryGrowsOnlyOnSuccess(@ForAll("nonNegativeBalances") BigDecimal initialBalance,
@@ -491,6 +523,7 @@ class AccountServicePropertyTest {
         }
     }
 
+    // Propiedad: las transacciones persistidas tienen identificadores únicos y están ordenadas por fecha.
     @Property(tries = 20)
     @Label("5.2 IDs únicos y orden temporal")
     void transactionsAreStoredWithUniqueIds(@ForAll("nonNegativeBalances") BigDecimal initialBalance,
@@ -507,6 +540,7 @@ class AccountServicePropertyTest {
         Assertions.assertThat(ordered).isEqualTo(sortedByOccurred);
     }
 
+    // Propiedad: una cuenta guardada y luego cargada desde la base debe conservar todos sus datos.
     @Property(tries = 20)
     @Label("5.3 Persistencia round-trip")
     void accountPersistenceRoundTrip(@ForAll("nonNegativeBalances") BigDecimal initialBalance) {
@@ -516,6 +550,7 @@ class AccountServicePropertyTest {
         Assertions.assertThat(loaded.getBalance()).isEqualByComparingTo(created.getBalance());
     }
 
+    // Propiedad: realizar depósitos concurrentes no debe perder actualizaciones en el saldo final.
     @Property(tries = 20)
     @Label("7.1 Depósitos concurrentes")
     void concurrentDepositsDoNotLoseUpdates(@ForAll("nonNegativeBalances") BigDecimal initialBalance,
@@ -537,6 +572,7 @@ class AccountServicePropertyTest {
                 .isEqualByComparingTo(expected);
     }
 
+    // Propiedad: transferencias concurrentes en ambos sentidos mantienen la suma total y evitan saldos negativos.
     @Property(tries = 10)
     @Label("7.2 Transferencias cruzadas concurrentes")
     void concurrentCrossTransfersConserveTotals(@ForAll("positiveAmounts") BigDecimal amount) throws Exception {
@@ -565,6 +601,7 @@ class AccountServicePropertyTest {
                 .isGreaterThanOrEqualTo(BigDecimal.ZERO);
     }
 
+    // Propiedad: los invariantes globales de no negatividad y conservación de dinero resisten secuencias largas.
     @Property(tries = 20)
     @Label("13.1/13.2 Invariantes globales")
     void globalInvariantsHold(@ForAll("operationSequences") List<AccountOperation> operations) {
@@ -650,11 +687,21 @@ class AccountServicePropertyTest {
     }
 
     private Arbitrary<BigDecimal> monetaryAmount(BigDecimal min, BigDecimal max, int minScale, int maxScale) {
-        return Combinators.combine(
-                        Arbitraries.bigDecimals().between(min, max),
-                        Arbitraries.integers().between(minScale, maxScale))
-                .as((value, scale) -> value.setScale(scale, RoundingMode.HALF_UP))
-                .filter(scaled -> scaled.compareTo(min) >= 0 && scaled.compareTo(max) <= 0);
+        return Arbitraries.integers().between(minScale, maxScale)
+                .filter(scale -> canRepresentRange(min, max, scale))
+                .flatMap(scale -> {
+                    BigDecimal minAtScale = min.setScale(scale, RoundingMode.CEILING);
+                    BigDecimal maxAtScale = max.setScale(scale, RoundingMode.FLOOR);
+                    return Arbitraries.bigIntegers()
+                            .between(minAtScale.unscaledValue(), maxAtScale.unscaledValue())
+                            .map((BigInteger value) -> new BigDecimal(value, scale));
+                });
+    }
+
+    private boolean canRepresentRange(BigDecimal min, BigDecimal max, int scale) {
+        BigDecimal minAtScale = min.setScale(scale, RoundingMode.CEILING);
+        BigDecimal maxAtScale = max.setScale(scale, RoundingMode.FLOOR);
+        return minAtScale.compareTo(maxAtScale) <= 0;
     }
 
     private enum AccountOperationType {

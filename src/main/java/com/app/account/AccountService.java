@@ -12,6 +12,7 @@ import com.app.transaction.TransactionType;
 import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
@@ -61,7 +62,7 @@ public class AccountService {
     public Account deposit(String accountNumber, BigDecimal amount) {
         validatePositive(amount, "El monto del depósito debe ser mayor que cero");
         BigDecimal normalized = normalize(amount);
-        Account account = findAccount(accountNumber);
+        Account account = lockAccount(accountNumber);
         account.deposit(normalized);
         Account updated = accountRepository.save(account);
         AccountTransaction transaction = new AccountTransaction(null, updated, TransactionType.DEPOSIT, normalized,
@@ -73,7 +74,7 @@ public class AccountService {
     public Account withdraw(String accountNumber, BigDecimal amount) {
         validatePositive(amount, "El monto del retiro debe ser mayor que cero");
         BigDecimal normalized = normalize(amount);
-        Account account = findAccount(accountNumber);
+        Account account = lockAccount(accountNumber);
         if (account.getBalance().compareTo(normalized) < 0) {
             throw new BusinessException("Saldo insuficiente para el retiro");
         }
@@ -115,8 +116,20 @@ public class AccountService {
                 existingRecord = Optional.of(idempotencyRecordRepository.save(newRecord));
             }
         }
-        Account source = findAccount(sourceAccountNumber);
-        Account target = findAccount(targetAccountNumber);
+        List<Account> lockedAccounts = accountRepository.findAllByAccountNumberInForUpdate(
+                List.of(sourceAccountNumber, targetAccountNumber));
+        if (lockedAccounts.size() != 2) {
+            throw new ResourceNotFoundException("Cuenta no encontrada");
+        }
+        lockedAccounts.sort(Comparator.comparing(Account::getAccountNumber));
+        Account first = lockedAccounts.get(0);
+        Account second = lockedAccounts.get(1);
+        Account source = first.getAccountNumber().equals(sourceAccountNumber) ? first : second;
+        Account target = first.getAccountNumber().equals(targetAccountNumber) ? first : second;
+        if (source == target) {
+            source = first;
+            target = second;
+        }
         if (source.getBalance().compareTo(normalized) < 0) {
             existingRecord.ifPresent(record -> {
                 record.markFailed("Saldo insuficiente", timeProvider.now());
@@ -144,6 +157,11 @@ public class AccountService {
 
     private Account findAccount(String accountNumber) {
         return accountRepository.findByAccountNumber(accountNumber)
+                .orElseThrow(() -> new ResourceNotFoundException("Cuenta no encontrada"));
+    }
+
+    private Account lockAccount(String accountNumber) {
+        return accountRepository.findByAccountNumberForUpdate(accountNumber)
                 .orElseThrow(() -> new ResourceNotFoundException("Cuenta no encontrada"));
     }
 
