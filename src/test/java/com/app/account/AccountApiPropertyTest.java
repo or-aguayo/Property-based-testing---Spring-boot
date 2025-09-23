@@ -1,5 +1,7 @@
 package com.app.account;
 
+import com.app.AppApplication;
+import com.app.account.AccountRepository;
 import com.app.account.dto.CreateAccountRequest;
 import com.app.account.dto.TransferRequest;
 import com.app.idempotency.IdempotencyRecordRepository;
@@ -16,42 +18,64 @@ import net.jqwik.api.ForAll;
 import net.jqwik.api.Label;
 import net.jqwik.api.Property;
 import net.jqwik.api.Provide;
+import net.jqwik.api.lifecycle.AfterContainer;
+import net.jqwik.api.lifecycle.BeforeContainer;
 import net.jqwik.api.lifecycle.BeforeTry;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.TestInstance;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
-@AutoConfigureMockMvc
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class AccountApiPropertyTest {
 
-    @Autowired
+    private static ConfigurableApplicationContext context;
+
     private MockMvc mockMvc;
-
-    @Autowired
     private ObjectMapper objectMapper;
-
-    @Autowired
     private AccountRepository accountRepository;
-
-    @Autowired
     private AccountTransactionRepository transactionRepository;
-
-    @Autowired
     private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @BeforeContainer
+    void loadSpringContext() {
+        if (context == null) {
+            // Arrancamos la aplicación con el contexto completo y puerto aleatorio para reutilizar la pila web real.
+            context = new SpringApplicationBuilder(AppApplication.class)
+                    .properties(Map.of("server.port", "0"))
+                    .run();
+        }
+
+        // Obtenemos todos los beans necesarios para invocar la API desde MockMvc en cada propiedad.
+        objectMapper = context.getBean(ObjectMapper.class);
+        accountRepository = context.getBean(AccountRepository.class);
+        transactionRepository = context.getBean(AccountTransactionRepository.class);
+        idempotencyRecordRepository = context.getBean(IdempotencyRecordRepository.class);
+        WebApplicationContext webContext = (WebApplicationContext) context;
+        mockMvc = MockMvcBuilders.webAppContextSetup(webContext).build();
+    }
+
+    @AfterContainer
+    void closeSpringContext() {
+        if (context != null) {
+            // Liberamos los recursos asociados al contenedor web una vez finalicen todas las propiedades.
+            context.close();
+            context = null;
+        }
+    }
 
     @BeforeTry
     void cleanState() {
+        // Reiniciamos las tablas relevantes para que cada intento parta de un estado determinista.
         transactionRepository.deleteAll();
         idempotencyRecordRepository.deleteAll();
         accountRepository.deleteAll();
@@ -84,6 +108,7 @@ class AccountApiPropertyTest {
     void postThenGetMatchesState(@ForAll("accountNumbers") String accountNumber,
             @ForAll("holderNames") String holderName,
             @ForAll("balances") BigDecimal balance) throws Exception {
+        // Damos de alta la cuenta mediante la API REST y comprobamos que la lectura posterior refleja exactamente lo enviado.
         CreateAccountRequest request = new CreateAccountRequest();
         request.setAccountNumber(accountNumber);
         request.setHolderName(holderName);
@@ -109,6 +134,7 @@ class AccountApiPropertyTest {
     void transferKeepsReportedTotals(@ForAll("balances") BigDecimal sourceBalance,
             @ForAll("balances") BigDecimal targetBalance,
             @ForAll("transferAmounts") BigDecimal amount) throws Exception {
+        // Creamos dos cuentas vía HTTP y verificamos que cualquier transferencia conserva la suma de sus saldos visibles.
         String source = createAccountViaApi(sourceBalance);
         String target = createAccountViaApi(targetBalance);
 
