@@ -1,5 +1,6 @@
 package com.app.account;
 
+import com.app.AppApplication;
 import com.app.common.exception.BusinessException;
 import com.app.idempotency.IdempotencyRecordRepository;
 import com.app.transaction.AccountTransaction;
@@ -25,38 +26,66 @@ import net.jqwik.api.ForAll;
 import net.jqwik.api.Label;
 import net.jqwik.api.Property;
 import net.jqwik.api.Provide;
+import net.jqwik.api.lifecycle.AfterContainer;
+import net.jqwik.api.lifecycle.BeforeContainer;
 import net.jqwik.api.lifecycle.BeforeTry;
 import net.jqwik.api.statistics.Statistics;
 import org.assertj.core.api.Assertions;
-import org.junit.jupiter.api.TestInstance;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.annotation.DirtiesContext;
-
-@SpringBootTest
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.context.ConfigurableApplicationContext;
 class AccountServicePropertyTest {
 
     private static final AtomicInteger ACCOUNT_SEQUENCE = new AtomicInteger();
 
-    @Autowired
-    private AccountService accountService;
+    private static ConfigurableApplicationContext context;
 
-    @Autowired
-    private AccountRepository accountRepository;
+    private static AccountService accountService;
+    private static AccountRepository accountRepository;
+    private static AccountTransactionRepository transactionRepository;
+    private static IdempotencyRecordRepository idempotencyRecordRepository;
 
-    @Autowired
-    private AccountTransactionRepository transactionRepository;
+    @BeforeContainer
+    static void loadSpringContext() {
+        if (context == null) {
+            // Inicializamos la aplicación exactamente igual que en producción para reutilizar todos los beans reales.
+            context = new SpringApplicationBuilder(AppApplication.class)
+                    .properties(Map.of("server.port", "0"))
+                    .run();
+        }
+    }
 
-    @Autowired
-    private IdempotencyRecordRepository idempotencyRecordRepository;
+    @AfterContainer
+    static void closeSpringContext() {
+        if (context != null) {
+            // Cerramos el contexto al finalizar todas las propiedades para liberar conexiones y limpiar la memoria.
+            context.close();
+            context = null;
+            accountService = null;
+            accountRepository = null;
+            transactionRepository = null;
+            idempotencyRecordRepository = null;
+        }
+    }
 
     @BeforeTry
     void cleanState() {
+        // Aseguramos que los beans hayan sido recuperados del contexto compartido antes de interactuar con la base de datos.
+        ensureDependenciesLoaded();
+
+        // Eliminamos cualquier rastro de datos generado en pruebas anteriores antes de cada intento de propiedad.
         transactionRepository.deleteAll();
         idempotencyRecordRepository.deleteAll();
         accountRepository.deleteAll();
+    }
+
+    private void ensureDependenciesLoaded() {
+        if (accountService == null) {
+            // Recuperamos los beans necesarios a partir del contexto arrancado una sola vez para todo el conjunto de propiedades.
+            accountService = context.getBean(AccountService.class);
+            accountRepository = context.getBean(AccountRepository.class);
+            transactionRepository = context.getBean(AccountTransactionRepository.class);
+            idempotencyRecordRepository = context.getBean(IdempotencyRecordRepository.class);
+        }
     }
 
     @Provide
@@ -74,7 +103,8 @@ class AccountServicePropertyTest {
 
     @Provide
     Arbitrary<BigDecimal> variableScaleAmounts() {
-        return monetaryAmount(new BigDecimal("0.0001"), new BigDecimal("1000000"), 0, 6);
+        // Para cantidades con más precisión forzamos a que la escala mínima permita representar 0.0001 sin errores.
+        return monetaryAmount(new BigDecimal("0.0001"), new BigDecimal("1000000"), 4, 6);
     }
 
     @Provide
@@ -99,6 +129,7 @@ class AccountServicePropertyTest {
     @Label("1.1 Depósito aumenta saldo y nunca negativo")
     void depositAlwaysIncreasesBalance(@ForAll("nonNegativeBalances") BigDecimal initialBalance,
             @ForAll("positiveAmounts") BigDecimal deposit) {
+        // Creamos una cuenta de prueba y aplicamos un depósito para comprobar que el saldo solo puede crecer.
         Account account = accountService.createAccount(nextAccountNumber(), "Holder", initialBalance);
         Account afterDeposit = accountService.deposit(account.getAccountNumber(), deposit);
 
@@ -156,6 +187,7 @@ class AccountServicePropertyTest {
     void transferConservesTotal(@ForAll("nonNegativeBalances") BigDecimal sourceBalance,
             @ForAll("nonNegativeBalances") BigDecimal targetBalance,
             @ForAll("positiveAmounts") BigDecimal amount) {
+        // Se crean dos cuentas y se registra el saldo total para verificar que una transferencia no crea ni destruye dinero.
         Account source = accountService.createAccount(nextAccountNumber(), "Source", sourceBalance);
         Account target = accountService.createAccount(nextAccountNumber(), "Target", targetBalance);
 
