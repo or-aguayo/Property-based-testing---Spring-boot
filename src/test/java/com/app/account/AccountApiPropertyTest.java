@@ -37,7 +37,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AccountApiPropertyTest {
 
     private static ConfigurableApplicationContext context;
-
     private static MockMvc mockMvc;
     private static ObjectMapper objectMapper;
     private static AccountRepository accountRepository;
@@ -67,12 +66,37 @@ class AccountApiPropertyTest {
             idempotencyRecordRepository = null;
         }
     }
+    @BeforeContainer
+    void loadSpringContext() {
+        if (context == null) {
+            // Arrancamos la aplicación con el contexto completo y puerto aleatorio para reutilizar la pila web real.
+            context = new SpringApplicationBuilder(AppApplication.class)
+                    .properties(Map.of("server.port", "0"))
+                    .run();
+        }
+
+        // Obtenemos todos los beans necesarios para invocar la API desde MockMvc en cada propiedad.
+        objectMapper = context.getBean(ObjectMapper.class);
+        accountRepository = context.getBean(AccountRepository.class);
+        transactionRepository = context.getBean(AccountTransactionRepository.class);
+        idempotencyRecordRepository = context.getBean(IdempotencyRecordRepository.class);
+        WebApplicationContext webContext = (WebApplicationContext) context;
+        mockMvc = MockMvcBuilders.webAppContextSetup(webContext).build();
+    }
+
+    @AfterContainer
+    void closeSpringContext() {
+        if (context != null) {
+            // Liberamos los recursos asociados al contenedor web una vez finalicen todas las propiedades.
+            context.close();
+            context = null;
+        }
+    }
 
     @BeforeTry
     void cleanState() {
         // Aseguramos que los beans del contexto web estén disponibles antes de ejecutar cada propiedad.
         ensureDependenciesLoaded();
-
         // Reiniciamos las tablas relevantes para que cada intento parta de un estado determinista.
         transactionRepository.deleteAll();
         idempotencyRecordRepository.deleteAll();
